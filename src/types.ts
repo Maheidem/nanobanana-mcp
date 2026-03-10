@@ -34,5 +34,7 @@ export interface SessionState {
   lastModel: string | null;
   lastTimestamp: string | null;
   preferredModel: string | null;
+  enhancePrompt: boolean;
+  enhancerModel: string | null;
   needsModelSelection: boolean;
 }

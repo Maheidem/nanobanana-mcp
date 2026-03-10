@@ -1,6 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
 import {
   DEFAULT_MODEL,
+  DEFAULT_ENHANCER_MODEL,
   MODEL_CAPABILITIES,
   IMAGE_SIZES,
   type ModelId,
@@ -45,6 +46,45 @@ function resolveImageSize(size: ImageSize | undefined, model: ModelId): ImageSiz
     return caps.maxSize;
   }
   return normalized;
+}
+
+const ENHANCE_SYSTEM_PROMPT = `You are an expert image generation prompt engineer. Your job is to take a user's simple prompt and rewrite it into a detailed, vivid prompt optimized for AI image generation.
+
+Rules:
+- Keep the user's core intent and subject matter
+- Add specific details: lighting, composition, style, mood, colors, camera angle, materials, textures
+- Use descriptive, narrative language (not keyword lists)
+- For negative elements, use "Exclude X, Y, Z" format
+- Keep it under 500 words
+- Return ONLY the enhanced prompt, nothing else — no preamble, no explanation`;
+
+/**
+ * Enhance a prompt using a text-only Gemini model.
+ * Returns a more detailed, image-generation-optimized version.
+ */
+export async function enhancePrompt(prompt: string, enhancerModel?: string): Promise<string> {
+  const ai = getClient();
+  const model = enhancerModel || DEFAULT_ENHANCER_MODEL;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: prompt,
+    config: {
+      systemInstruction: ENHANCE_SYSTEM_PROMPT,
+    },
+  });
+
+  const text = response?.candidates?.[0]?.content?.parts
+    ?.filter((p: { text?: string }) => p.text)
+    .map((p: { text?: string }) => p.text)
+    .join("") || "";
+
+  if (!text.trim()) {
+    // Fallback to original prompt if enhancement fails
+    return prompt;
+  }
+
+  return text.trim();
 }
 
 interface GenerateConfig {

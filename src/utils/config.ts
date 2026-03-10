@@ -5,12 +5,16 @@ import * as os from "node:os";
 const CONFIG_DIR = path.join(os.homedir(), ".config", "nanobanana-mcp");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 
-interface Config {
+export interface Config {
   preferredModel: string | null;
+  enhancePrompt: boolean;
+  enhancerModel: string | null;
 }
 
 const DEFAULT_CONFIG: Config = {
   preferredModel: null,
+  enhancePrompt: false,
+  enhancerModel: null,
 };
 
 /**

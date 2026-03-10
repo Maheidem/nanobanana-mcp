@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { MODELS, DEFAULT_MODEL, ASPECT_RATIOS, IMAGE_SIZES } from "../constants.js";
-import { generateImage } from "../services/gemini.js";
+import { generateImage, enhancePrompt } from "../services/gemini.js";
 import { saveImage, resolveOutputDir } from "../utils/files.js";
 import { parseGeminiError, mcpError } from "../utils/errors.js";
 import type { SessionState } from "../types.js";
@@ -13,6 +13,9 @@ const inputSchema = {
     .min(1, "Prompt is required")
     .max(10000, "Prompt too long (max 10000 chars)")
     .describe("Text description of the image to generate"),
+  enhancePrompt: z.boolean()
+    .optional()
+    .describe("When true, uses a Gemini text model to rewrite your prompt into a detailed, optimized version before generating. Great for short/simple prompts."),
   model: z.enum(modelIds)
     .optional()
     .describe(`Model to use. Default: ${DEFAULT_MODEL}. Options: ${modelIds.join(", ")}`),
@@ -41,6 +44,7 @@ Default model: ${DEFAULT_MODEL} (Nano Banana 2 - best price/performance, up to 4
 
 Args:
   - prompt (string, required): Detailed description of the image to generate
+  - enhancePrompt (boolean, optional): Rewrite prompt using AI for better results
   - model (string, optional): Model ID to use
   - aspectRatio (string, optional): e.g. "16:9", "1:1", "9:16"
   - imageSize (string, optional): "512", "1K", "2K", or "4K"
@@ -49,6 +53,7 @@ Args:
 Returns: File path of the generated image, model used, and any text description from the model.
 
 Tips:
+  - Use enhancePrompt=true for short prompts like "a cat in space" to get much better results
   - Narrative prompts work better than keyword lists
   - Use "Exclude X, Y, Z" instead of "no X, don't include Y" for negative prompts
   - Billing must be enabled on your Google AI account (no free tier for image generation)`,
@@ -69,8 +74,17 @@ Tips:
         const outputDir = resolveOutputDir(params.outputDir);
         const model = params.model || (state.preferredModel as NonNullable<typeof params.model>) || undefined;
 
+        // Enhance prompt: per-call param overrides config, config is default
+        const shouldEnhance = params.enhancePrompt ?? state.enhancePrompt;
+        let finalPrompt = params.prompt;
+        let enhanced = false;
+        if (shouldEnhance) {
+          finalPrompt = await enhancePrompt(params.prompt, state.enhancerModel || undefined);
+          enhanced = true;
+        }
+
         const result = await generateImage({
-          prompt: params.prompt,
+          prompt: finalPrompt,
           model,
           aspectRatio: params.aspectRatio,
           imageSize: params.imageSize,
@@ -80,7 +94,7 @@ Tips:
 
         // Update session state
         state.lastImagePath = filePath;
-        state.lastPrompt = params.prompt;
+        state.lastPrompt = finalPrompt;
         state.lastModel = result.model;
         state.lastTimestamp = new Date().toISOString();
 
@@ -88,6 +102,9 @@ Tips:
           `Image saved to: ${filePath}`,
           `Model: ${result.model}`,
         ];
+        if (enhanced) {
+          lines.push(`Enhanced prompt: ${finalPrompt}`);
+        }
         if (result.textResponse) {
           lines.push(`Description: ${result.textResponse}`);
         }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { MODELS, DEFAULT_MODEL, ASPECT_RATIOS, IMAGE_SIZES } from "../constants.js";
-import { editImage } from "../services/gemini.js";
+import { editImage, enhancePrompt } from "../services/gemini.js";
 import { readImageAsBase64, saveImage, resolveOutputDir } from "../utils/files.js";
 import { parseGeminiError, mcpError } from "../utils/errors.js";
 import type { SessionState } from "../types.js";
@@ -16,6 +16,9 @@ const inputSchema = {
     .min(1, "Edit prompt is required")
     .max(10000, "Prompt too long (max 10000 chars)")
     .describe("Text instructions describing how to edit the image"),
+  enhancePrompt: z.boolean()
+    .optional()
+    .describe("When true, uses a Gemini text model to rewrite your edit instructions into a more detailed version."),
   referenceImagePaths: z.array(z.string())
     .optional()
     .describe("Optional paths to reference images for style transfer or composition"),
@@ -93,10 +96,19 @@ Tips:
 
         const model = params.model || (state.preferredModel as NonNullable<typeof params.model>) || undefined;
 
+        // Enhance prompt: per-call param overrides config, config is default
+        const shouldEnhance = params.enhancePrompt ?? state.enhancePrompt;
+        let finalPrompt = params.prompt;
+        let enhanced = false;
+        if (shouldEnhance) {
+          finalPrompt = await enhancePrompt(params.prompt, state.enhancerModel || undefined);
+          enhanced = true;
+        }
+
         const result = await editImage({
           imageBase64: source.base64,
           imageMimeType: source.mimeType,
-          prompt: params.prompt,
+          prompt: finalPrompt,
           referenceImages,
           model,
           aspectRatio: params.aspectRatio,
@@ -107,7 +119,7 @@ Tips:
 
         // Update session state
         state.lastImagePath = filePath;
-        state.lastPrompt = params.prompt;
+        state.lastPrompt = finalPrompt;
         state.lastModel = result.model;
         state.lastTimestamp = new Date().toISOString();
 
@@ -116,6 +128,9 @@ Tips:
           `Source: ${params.imagePath}`,
           `Model: ${result.model}`,
         ];
+        if (enhanced) {
+          lines.push(`Enhanced prompt: ${finalPrompt}`);
+        }
         if (result.textResponse) {
           lines.push(`Description: ${result.textResponse}`);
         }

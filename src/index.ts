@@ -19,6 +19,8 @@ const state: SessionState = {
   lastModel: null,
   lastTimestamp: null,
   preferredModel: config.preferredModel,
+  enhancePrompt: config.enhancePrompt,
+  enhancerModel: config.enhancerModel,
   needsModelSelection: firstRun || !config.preferredModel,
 };
 

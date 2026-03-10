@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { MODELS, DEFAULT_MODEL, IMAGE_SIZES, MODEL_CAPABILITIES } from "../constants.js";
+import { MODELS, DEFAULT_MODEL, IMAGE_SIZES, MODEL_CAPABILITIES, ENHANCER_MODELS, DEFAULT_ENHANCER_MODEL } from "../constants.js";
 import { editImage } from "../services/gemini.js";
 import { readImageAsBase64, saveImage, resolveOutputDir } from "../utils/files.js";
 import { loadConfig, saveConfig } from "../utils/config.js";
@@ -9,6 +9,7 @@ import { parseGeminiError, mcpError } from "../utils/errors.js";
 import type { SessionState } from "../types.js";
 
 const modelIds = [MODELS.FLASH, MODELS.PRO, MODELS.FLASH2] as const;
+const enhancerModelIds = [ENHANCER_MODELS.FLASH, ENHANCER_MODELS.PRO] as const;
 
 export function registerSessionTools(server: McpServer, state: SessionState): void {
   // --- nb_continue_editing ---
@@ -136,24 +137,32 @@ Returns: lastImagePath, lastPrompt, model, timestamp, fileExists`,
   server.registerTool(
     "nb_list_models",
     {
-      title: "List & Select Models",
-      description: `List available Nano Banana models and optionally set a preferred model.
+      title: "List & Configure Models",
+      description: `List available Nano Banana models and configure preferences (persisted to disk across all sessions).
 
-IMPORTANT: If no preferred model has been configured yet, you MUST call this tool first and ask the user which model they want to use before generating or editing any images. Use AskUserQuestion to let them choose.
+IMPORTANT: If no preferred model has been configured yet, you MUST call this tool first and ask the user these questions via AskUserQuestion:
+  1. Which image generation model to use?
+  2. Enable prompt enhancement? (AI rewrites prompts for better results)
+  3. If yes: which model for prompt enhancement?
 
-When called without setModel: lists all models with capabilities and pricing.
-When called with setModel: saves the preferred model to disk (persists across all sessions and folders).
-
-The preferred model is used automatically by nb_generate_image, nb_edit_image, and nb_continue_editing when no explicit model is passed.
+Then call this tool with the user's choices to save them.
 
 Args:
-  - setModel (string, optional): Model ID to save as the preferred model (persisted to disk)
+  - setModel (string, optional): Image generation model ID to save
+  - setEnhancePrompt (boolean, optional): Enable/disable automatic prompt enhancement
+  - setEnhancerModel (string, optional): Model to use for prompt enhancement
 
-Returns: Formatted model list, current preference, and whether model selection is needed.`,
+Returns: Model list, current settings, and whether configuration is needed.`,
       inputSchema: {
         setModel: z.enum(modelIds)
           .optional()
-          .describe("Set this model as the preferred model (persisted to disk across all sessions)"),
+          .describe("Set the preferred image generation model"),
+        setEnhancePrompt: z.boolean()
+          .optional()
+          .describe("Enable or disable automatic prompt enhancement"),
+        setEnhancerModel: z.enum(enhancerModelIds)
+          .optional()
+          .describe(`Model for prompt enhancement. Options: ${enhancerModelIds.join(", ")}`),
       },
       annotations: {
         readOnlyHint: false,
@@ -162,12 +171,37 @@ Returns: Formatted model list, current preference, and whether model selection i
       },
     },
     async (params) => {
-      // Persist preferred model if requested
+      const config = loadConfig();
+      let changed = false;
+
       if (params.setModel) {
         state.preferredModel = params.setModel;
         state.needsModelSelection = false;
-        const config = loadConfig();
         config.preferredModel = params.setModel;
+        changed = true;
+      }
+
+      if (params.setEnhancePrompt !== undefined) {
+        state.enhancePrompt = params.setEnhancePrompt;
+        config.enhancePrompt = params.setEnhancePrompt;
+        // If disabling, clear enhancer model
+        if (!params.setEnhancePrompt) {
+          state.enhancerModel = null;
+          config.enhancerModel = null;
+        }
+        changed = true;
+      }
+
+      if (params.setEnhancerModel) {
+        state.enhancerModel = params.setEnhancerModel;
+        config.enhancerModel = params.setEnhancerModel;
+        // Implicitly enable enhancement
+        state.enhancePrompt = true;
+        config.enhancePrompt = true;
+        changed = true;
+      }
+
+      if (changed) {
         saveConfig(config);
       }
 
@@ -199,7 +233,7 @@ Returns: Formatted model list, current preference, and whether model selection i
       ];
 
       const preferred = state.preferredModel || DEFAULT_MODEL;
-      const lines = models.map((m) => {
+      const modelList = models.map((m) => {
         const isActive = m.id === preferred;
         return [
           `${isActive ? "→ " : "  "}**${m.name}**${isActive ? " (selected)" : ""}`,
@@ -211,16 +245,23 @@ Returns: Formatted model list, current preference, and whether model selection i
         ].join("\n");
       }).join("\n\n");
 
-      let footer: string;
-      if (params.setModel) {
-        footer = `\nPreferred model saved: ${params.setModel} (persisted to disk)`;
-      } else if (state.preferredModel) {
-        footer = `\nCurrent preferred model: ${state.preferredModel}`;
-      } else {
-        footer = `\nNo preferred model set yet. Ask the user which model they want to use, then call nb_list_models with setModel.`;
+      // Settings summary
+      const settings = [
+        `\n--- Current Settings ---`,
+        `Image model: ${state.preferredModel || "not set"}`,
+        `Prompt enhancement: ${state.enhancePrompt ? "ON" : "OFF"}`,
+      ];
+      if (state.enhancePrompt) {
+        settings.push(`Enhancer model: ${state.enhancerModel || DEFAULT_ENHANCER_MODEL} (default: ${DEFAULT_ENHANCER_MODEL})`);
       }
 
-      return { content: [{ type: "text", text: lines + footer }] };
+      if (changed) {
+        settings.push(`\nSettings saved to disk.`);
+      } else if (!state.preferredModel) {
+        settings.push(`\nNo configuration yet. Ask the user to choose a model and prompt enhancement settings.`);
+      }
+
+      return { content: [{ type: "text", text: modelList + settings.join("\n") }] };
     },
   );
 }
