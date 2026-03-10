@@ -10,16 +10,8 @@ export const MODELS = {
 
 export const DEFAULT_MODEL = MODELS.FLASH2;
 
-/** Models available for prompt enhancement */
-export const ENHANCER_MODELS = {
-  FLASH: "gemini-2.5-flash",
-  PRO: "gemini-2.5-pro",
-} as const;
-
-export type EnhancerModelId = (typeof ENHANCER_MODELS)[keyof typeof ENHANCER_MODELS];
-
 /** Default model for prompt enhancement (cheap, fast, text-only) */
-export const DEFAULT_ENHANCER_MODEL = ENHANCER_MODELS.FLASH;
+export const DEFAULT_ENHANCER_MODEL = "gemini-2.5-flash";
 
 export type ModelId = (typeof MODELS)[keyof typeof MODELS];
 

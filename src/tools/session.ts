@@ -1,15 +1,14 @@
 import * as fs from "node:fs";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { MODELS, DEFAULT_MODEL, IMAGE_SIZES, MODEL_CAPABILITIES, ENHANCER_MODELS, DEFAULT_ENHANCER_MODEL } from "../constants.js";
-import { editImage } from "../services/gemini.js";
+import { MODELS, DEFAULT_MODEL, IMAGE_SIZES, MODEL_CAPABILITIES, DEFAULT_ENHANCER_MODEL } from "../constants.js";
+import { editImage, getAvailableEnhancerModels } from "../services/gemini.js";
 import { readImageAsBase64, saveImage, resolveOutputDir } from "../utils/files.js";
 import { loadConfig, saveConfig } from "../utils/config.js";
 import { parseGeminiError, mcpError } from "../utils/errors.js";
 import type { SessionState } from "../types.js";
 
 const modelIds = [MODELS.FLASH, MODELS.PRO, MODELS.FLASH2] as const;
-const enhancerModelIds = [ENHANCER_MODELS.FLASH, ENHANCER_MODELS.PRO] as const;
 
 export function registerSessionTools(server: McpServer, state: SessionState): void {
   // --- nb_continue_editing ---
@@ -160,9 +159,9 @@ Returns: Model list, current settings, and whether configuration is needed.`,
         setEnhancePrompt: z.boolean()
           .optional()
           .describe("Enable or disable automatic prompt enhancement"),
-        setEnhancerModel: z.enum(enhancerModelIds)
+        setEnhancerModel: z.string()
           .optional()
-          .describe(`Model for prompt enhancement. Options: ${enhancerModelIds.join(", ")}`),
+          .describe("Model for prompt enhancement. Call this tool without args first to see available models."),
       },
       annotations: {
         readOnlyHint: false,
@@ -171,6 +170,9 @@ Returns: Model list, current settings, and whether configuration is needed.`,
       },
     },
     async (params) => {
+      // Fetch available enhancer models from the API (cached after first call)
+      const availableEnhancers = await getAvailableEnhancerModels();
+
       const config = loadConfig();
       let changed = false;
 
@@ -193,6 +195,12 @@ Returns: Model list, current settings, and whether configuration is needed.`,
       }
 
       if (params.setEnhancerModel) {
+        // Validate against dynamically fetched models
+        if (!availableEnhancers.includes(params.setEnhancerModel)) {
+          return mcpError(
+            `Unknown enhancer model: "${params.setEnhancerModel}". Available: ${availableEnhancers.join(", ")}`,
+          );
+        }
         state.enhancerModel = params.setEnhancerModel;
         config.enhancerModel = params.setEnhancerModel;
         // Implicitly enable enhancement
@@ -254,6 +262,10 @@ Returns: Model list, current settings, and whether configuration is needed.`,
       if (state.enhancePrompt) {
         settings.push(`Enhancer model: ${state.enhancerModel || DEFAULT_ENHANCER_MODEL} (default: ${DEFAULT_ENHANCER_MODEL})`);
       }
+
+      // Show available enhancer models (fetched from API)
+      settings.push(`\n--- Available Enhancer Models ---`);
+      settings.push(availableEnhancers.map((m) => `  • ${m}`).join("\n"));
 
       if (changed) {
         settings.push(`\nSettings saved to disk.`);

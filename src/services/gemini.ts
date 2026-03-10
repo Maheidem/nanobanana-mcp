@@ -8,6 +8,16 @@ import {
   type AspectRatio,
   type ImageSize,
 } from "../constants.js";
+
+/** Patterns to exclude from enhancer model list (non-text or specialized models) */
+const ENHANCER_EXCLUDE = [
+  /image/i, /audio/i, /tts/i, /robotics/i, /computer/i,
+  /embedding/i, /research/i, /customtools/i, /nano-banana/i,
+  /gemma/i, /imagen/i, /veo/i, /aqa/i,
+  /-\d{3}$/, // versioned snapshots (-001)
+  /-\d{2}-\d{4}$/, // date stamps (-09-2025)
+  /-latest$/, // aliases
+];
 import type { GeminiImageResult } from "../types.js";
 
 let client: GoogleGenAI | null = null;
@@ -26,6 +36,37 @@ export function initGeminiClient(): void {
 function getClient(): GoogleGenAI {
   if (!client) throw new Error("Gemini client not initialized. Call initGeminiClient() first.");
   return client;
+}
+
+/** Cached list of enhancer model IDs (fetched once per session) */
+let cachedEnhancerModels: string[] | null = null;
+
+/**
+ * Fetch available text-only Gemini models suitable for prompt enhancement.
+ * Queries the models.list API endpoint and filters out image/audio/specialized models.
+ * Results are cached for the session duration.
+ */
+export async function getAvailableEnhancerModels(): Promise<string[]> {
+  if (cachedEnhancerModels) return cachedEnhancerModels;
+
+  const ai = getClient();
+  try {
+    const models: string[] = [];
+    const pager = await ai.models.list();
+    for await (const model of pager) {
+      const id = (model.name || "").replace(/^models\//, "");
+      if (!id.startsWith("gemini-")) continue;
+      if (ENHANCER_EXCLUDE.some((p) => p.test(id))) continue;
+      if (!model.supportedActions?.includes("generateContent")) continue;
+      models.push(id);
+    }
+    cachedEnhancerModels = models.length > 0 ? models : [DEFAULT_ENHANCER_MODEL];
+    return cachedEnhancerModels;
+  } catch {
+    // Fallback if API call fails
+    cachedEnhancerModels = [DEFAULT_ENHANCER_MODEL];
+    return cachedEnhancerModels;
+  }
 }
 
 /**
