@@ -30,7 +30,7 @@ MCP server for Google's Nano Banana image generation models (Gemini). Generate a
 ### Claude Code (recommended)
 
 ```bash
-claude mcp add nano-banana -e GEMINI_API_KEY=your-key -- npx @maheidem/nanobanana-mcp
+claude mcp add nano-banana -e GEMINI_API_KEY=your-key -- npx --yes @maheidem/nanobanana-mcp
 ```
 
 ### Manual `.mcp.json`
